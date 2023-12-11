@@ -15,9 +15,9 @@ namespace SqlMaster
         }
 
         #region List<SqlParameter>
-        public static DataRow GetFirstRowOfTable(string sql, ConnectionType connectionType, List<SqlParameter> parameters, bool isStoredProcedure = false)
+        public static DataRow GetFirstRowOfTable(string sql, ConnectionType connectionType, List<SqlParameter> parameters)
         {
-            DataTable dataTable = GetDataFromDatabase(sql, connectionType, parameters, isStoredProcedure);
+            DataTable dataTable = GetDataFromDatabase(sql, connectionType, parameters);
 
             if (dataTable.Rows.Count > 0)
                 return dataTable.Rows[0];
@@ -35,24 +35,26 @@ namespace SqlMaster
             return new SqlParameter() { ParameterName = parameterName, SqlDbType = sqlDbType, Value = value };
         }
 
-        public static DataTable GetDataFromDatabase(string sql, ConnectionType connectionType, List<SqlParameter> parameters, bool isStoredProcedure = false)
+        public static DataTable GetDataFromDatabase(string sql, ConnectionType connectionType, List<SqlParameter> parameters)
         {
             DataTable dataTable = new DataTable();
 
-            GetDataFromDatabaseAppend(sql, connectionType, parameters, dataTable, isStoredProcedure);
+            GetDataFromDatabaseAppend(sql, connectionType, parameters, dataTable);
 
             return dataTable;
         }
 
-        public static void GetDataFromDatabaseAppend(string sql, ConnectionType connectionType, List<SqlParameter> parameters, DataTable dataTable, bool isStoredProcedure = false)
+        public static void GetDataFromDatabaseAppend(string sql, ConnectionType connectionType, List<SqlParameter> parameters, DataTable dataTable)
         {
             using (SqlDataAdapter dataAdapter = new SqlDataAdapter(sql, GetConnectionString(connectionType)))
             {
                 AddParameters(dataAdapter.SelectCommand, parameters);
 
-                SetCommandTypeIfStoredProcedure(dataAdapter.SelectCommand, isStoredProcedure);
+                SetCommandTypeIfStoredProcedure(dataAdapter.SelectCommand, true);
 
                 SqlFillWithTimer(dataAdapter, dataTable);
+
+                ClearParameters(dataAdapter.SelectCommand);
             }
         }
 
@@ -65,6 +67,11 @@ namespace SqlMaster
                     cmd.Parameters.Add(parameter);
                 }
             }
+        }
+
+        private static void ClearParameters(SqlCommand cmd)
+        {
+            cmd.Parameters.Clear();
         }
 
         public static Object ExecuteScalar(string sql, ConnectionType connectionType, List<SqlParameter> parameters, bool isStoredProcedure = false)
@@ -237,8 +244,10 @@ namespace SqlMaster
                 sqlCommand.CommandType = CommandType.StoredProcedure;
         }
 
-        public static bool UpdateDatabase(string sql, ConnectionType connectionType, List<SqlParameter> parameters, bool isStoredProcedure = false)
+        public static SqlResponse UpdateDatabase(string sql, ConnectionType connectionType, List<SqlParameter> parameters)
         {
+            SqlResponse sqlResponse = new SqlResponse();
+
             try
             {
                 using (SqlConnection connection = new SqlConnection(GetConnectionString(connectionType)))
@@ -246,16 +255,61 @@ namespace SqlMaster
                 {
                     connection.Open();
                     AddParameters(command, parameters);
-                    SetCommandTypeIfStoredProcedure(command, isStoredProcedure);
+                    SetCommandTypeIfStoredProcedure(command, true);
                     command.ExecuteNonQuery();
 
-                    return true;
+                    sqlResponse.Success = true;
                 }
             }
             catch (Exception exception)
             {
-                return false;
+                sqlResponse.Success = false;
+                sqlResponse.Exception = exception;
             }
+
+            return sqlResponse;
+        }
+
+        public static SqlResponse InsertIntoDatabaseNoReturnId(string sql, ConnectionType connectionType, List<SqlParameter> parameters)
+        {
+            return UpdateDatabase(sql, connectionType, parameters);
+        }
+
+        public static SqlResponse InsertIntoDatabase(string sql, ConnectionType connectionType, List<SqlParameter> parameters)
+        {
+            SqlResponse sqlResponse = new SqlResponse();
+
+            try
+            {
+                using (SqlConnection connection = new SqlConnection(GetConnectionString(connectionType)))
+                using (SqlCommand command = new SqlCommand(sql, connection))
+                {
+                    connection.Open();
+                    AddParameters(command, parameters);
+                    SetCommandTypeIfStoredProcedure(command, true);
+
+                    int newId = -1;
+
+                    try
+                    {
+                        newId = Convert.ToInt32(command.ExecuteScalar());
+                    }
+                    catch (Exception exception)
+                    {
+                        throw new Exception("Unable to convert returned Id");
+                    }
+
+                    sqlResponse.Success = true;
+                    sqlResponse.NewId = newId;
+                }
+            }
+            catch (Exception exception)
+            {
+                sqlResponse.Success = false;
+                sqlResponse.Exception = exception;
+            }
+
+            return sqlResponse;
         }
 
         public static int UpdateDatabase(string sql, ConnectionType connectionType, Dictionary<string, object> parameters, bool isStoredProcedure = false)
